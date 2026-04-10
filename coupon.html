@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>鯛焼き新世界 クーポン</title>
+<title>鯛焼き新世界 クーポン v5.1</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.5/JsBarcode.all.min.js"></script>
@@ -177,7 +177,9 @@ body{background:#0f0c08;font-family:'Hiragino Kaku Gothic ProN','YuGothic','Noto
 .rm-actions{display:flex;flex-direction:column;align-items:center;gap:10px;width:100%;max-width:400px}
 .rm-print-btn{background:#c8a96e;color:#1a1510;border:none;border-radius:8px;padding:13px 24px;font-size:15px;font-weight:800;cursor:pointer;width:100%;-webkit-appearance:none}
 .rm-close-btn{background:transparent;color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:8px;padding:10px 24px;font-size:14px;cursor:pointer;width:100%;-webkit-appearance:none}
-.rm-hint{font-size:12px;color:rgba(255,255,255,.4);text-align:center}
+.version{font-size:10px;color:#3a3020;letter-spacing:.5px;align-self:center}
+.debug-log{background:#0a0a0a;border:1px solid #2a2018;border-radius:8px;padding:10px;font-family:monospace;font-size:11px;color:#5a9a6a;max-height:160px;overflow-y:auto;white-space:pre-wrap;line-height:1.5}
+.debug-ttl{font-size:10px;color:#c8a96e;margin-bottom:4px;letter-spacing:1px}
 
 /* お客様画面 */
 #customer-view{position:fixed;inset:0;z-index:8000;background:linear-gradient(160deg,#fff8f0,#fdf2e0);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px 16px;gap:16px;overflow-y:auto}
@@ -253,6 +255,7 @@ body{background:#0f0c08;font-family:'Hiragino Kaku Gothic ProN','YuGothic','Noto
       <button class="tb"    id="tab-list">一覧<span id="valid-badge" class="badge hidden"></span></button>
       <button class="tb"    id="tab-register">レジ</button>
     </nav>
+    <div class="version">v5.1</div>
   </header>
 
   <!-- 発行フォーム -->
@@ -349,6 +352,11 @@ body{background:#0f0c08;font-family:'Hiragino Kaku Gothic ProN','YuGothic','Noto
     </div>
     <div id="reg-err" class="err-box hidden"></div>
     <div id="reg-result" class="hidden"></div>
+    <!-- デバッグログ（スキャン問題の原因特定用） -->
+    <div>
+      <div class="debug-ttl">🔍 スキャンログ（問題確認用）</div>
+      <div class="debug-log" id="debug-log">待機中…</div>
+    </div>
   </div>
 </div>
 
@@ -363,6 +371,18 @@ body{background:#0f0c08;font-family:'Hiragino Kaku Gothic ProN','YuGothic','Noto
 var STORE = '鯛焼き新世界';
 var STORE_KEY = 'twc_v4';
 var UNLIMITED = '2099-12-31T23:59:59.999Z';
+var VERSION = 'v5.1';
+
+// ━━ デバッグログ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+var debugLines = [];
+function dbg(msg) {
+  var t = new Date();
+  var ts = pad(t.getHours())+':'+pad(t.getMinutes())+':'+pad(t.getSeconds());
+  debugLines.push('['+ts+'] '+msg);
+  if (debugLines.length > 30) debugLines.shift();
+  var el = $('debug-log');
+  if (el) { el.textContent = debugLines.join('\n'); el.scrollTop = el.scrollHeight; }
+}
 
 // ━━ 状態 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 var coupons = [];
@@ -744,52 +764,62 @@ $('stop-cam-btn').addEventListener('click',  stopCamera);
 
 function startCamera() {
   setRegErr('');
+  dbg('カメラ起動開始');
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     setRegErr('このブラウザはカメラ非対応です。\nSafariをお使いください。\n（HTTPS環境が必要です）');
+    dbg('ERROR: getUserMedia 非対応');
     return;
   }
   navigator.mediaDevices.getUserMedia({
     video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
   }).then(function(stream) {
+    dbg('getUserMedia 成功');
     camStream  = stream;
     scanActive = true;
     var video = $('cam-video');
-    // srcObject をセット
     video.srcObject = stream;
-    // UI を先に出す
     video.classList.remove('hidden');
     $('cam-ph').classList.add('hidden');
     $('scan-ov').classList.remove('hidden');
     $('stop-btn-wrap').classList.remove('hidden');
 
-    // play() は loadedmetadata 後に呼ぶ（iOS Safari 必須）
     function doPlay() {
+      dbg('play() 呼び出し readyState=' + video.readyState + ' size=' + video.videoWidth + 'x' + video.videoHeight);
       var p = video.play();
       if (p && p.then) {
         p.then(function() {
-          // play成功 → スキャン開始
+          dbg('play() 成功 → スキャン開始');
           scanActive = true;
           scanRaf = requestAnimationFrame(scanLoop);
-        }).catch(function() {
-          // 失敗したら少し待って再試行
+        }).catch(function(e) {
+          dbg('play() 失敗: ' + e + ' → 300ms後再試行');
           setTimeout(doPlay, 300);
         });
       } else {
+        dbg('play() 同期実行 → スキャン開始');
         scanActive = true;
         scanRaf = requestAnimationFrame(scanLoop);
       }
     }
 
+    dbg('readyState=' + video.readyState);
     if (video.readyState >= 2) {
       doPlay();
     } else {
-      video.addEventListener('loadedmetadata', doPlay, { once: true });
-      // iOS でイベントが来ない場合のフォールバック
+      dbg('loadedmetadata 待機中…');
+      video.addEventListener('loadedmetadata', function() {
+        dbg('loadedmetadata 発火');
+        doPlay();
+      }, { once: true });
       setTimeout(function() {
-        if (scanActive && !scanRaf) doPlay();
+        if (scanActive && !scanRaf) {
+          dbg('タイムアウト → 強制 doPlay');
+          doPlay();
+        }
       }, 1000);
     }
   }).catch(function(e) {
+    dbg('getUserMedia エラー: ' + e.name + ' - ' + e.message);
     var msg = (e.name === 'NotAllowedError')
       ? 'カメラの許可が必要です。\nSafariの設定 → このWebサイトの設定 →\nカメラを「許可」に変更してください。'
       : 'カメラを起動できませんでした。\n(' + (e.message || String(e)) + ')';
@@ -797,16 +827,26 @@ function startCamera() {
   });
 }
 
+var scanLoopCount = 0;
 function scanLoop() {
   if (!scanActive) return;
   var video  = $('cam-video');
   var canvas = $('scan-canvas');
-  // 映像がまだ来ていない場合は待機
+  scanLoopCount++;
+
+  // 5フレームごとにログ
+  if (scanLoopCount % 5 === 1) {
+    dbg('スキャン中 #' + scanLoopCount
+      + ' readyState=' + (video ? video.readyState : 'null')
+      + ' size=' + (video ? video.videoWidth+'x'+video.videoHeight : '-')
+      + ' paused=' + (video ? video.paused : '-')
+      + ' jsQR=' + (window.jsQR ? 'OK' : 'NG'));
+  }
+
   if (!video || video.readyState < 2 || video.videoWidth === 0 || video.paused) {
     scanRaf = requestAnimationFrame(scanLoop);
     return;
   }
-  // 400px にリサイズして処理（iOS高解像度対策）
   var SCAN = 400;
   var scale = SCAN / Math.max(video.videoWidth, video.videoHeight);
   var w = Math.floor(video.videoWidth  * scale);
@@ -818,17 +858,22 @@ function scanLoop() {
   var imageData = ctx.getImageData(0, 0, w, h);
   var qr = null;
   if (window.jsQR) {
-    try { qr = window.jsQR(imageData.data, w, h, { inversionAttempts: 'attemptBoth' }); } catch(e) {}
+    try { qr = window.jsQR(imageData.data, w, h, { inversionAttempts: 'attemptBoth' }); } catch(e) {
+      dbg('jsQR エラー: ' + e);
+    }
   }
   if (qr && qr.data) {
+    dbg('QR検出! data=' + qr.data.slice(0,20) + '…');
     stopCamera();
     var found = null;
     for (var i = 0; i < coupons.length; i++) {
       if (coupons[i].uuid === qr.data) { found = coupons[i]; break; }
     }
     if (found) {
+      dbg('クーポン照合 OK');
       showRegResult(found);
     } else {
+      dbg('クーポン照合 NG（DB未登録）');
       setRegErr('QRコードを読み取りましたが\n対応するクーポンが見つかりません。\n(UUID: ' + qr.data.slice(0,16) + '…)');
     }
   } else {
@@ -837,6 +882,7 @@ function scanLoop() {
 }
 
 function stopCamera() {
+  dbg('カメラ停止');
   scanActive = false;
   if (scanRaf) { cancelAnimationFrame(scanRaf); scanRaf = null; }
   if (camStream) { camStream.getTracks().forEach(function(t) { t.stop(); }); camStream = null; }
@@ -921,6 +967,8 @@ function setRegErr(msg) {
 // ━━ 初期化 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 coupons = loadData();
 updateBadge();
+dbg('起動完了 ' + VERSION + ' / クーポン数=' + coupons.length);
+dbg('UA: ' + navigator.userAgent.slice(0,60));
 
 })();
 </script>
