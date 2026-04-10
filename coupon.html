@@ -543,6 +543,20 @@ function RegisterTab({coupons,onUse}){
   const bcRef=useRef(null);
   const streamRef=useRef(null);
   const rafRef=useRef(null);
+  const pendingStreamRef=useRef(null);
+
+  // video要素がDOMに出現してから srcObject をセット（iOS Safari対策）
+  useEffect(()=>{
+    if(!scanning) return;
+    const v=videoRef.current;
+    const stream=pendingStreamRef.current;
+    if(!v||!stream) return;
+    pendingStreamRef.current=null;
+    v.srcObject=stream;
+    const onReady=()=>{ v.play().catch(()=>{}); };
+    v.addEventListener("loadedmetadata",onReady,{once:true});
+    if(v.readyState>=1) onReady();
+  },[scanning]);
 
   const stopCam=useCallback(()=>{
     streamRef.current?.getTracks().forEach(t=>t.stop());
@@ -559,13 +573,17 @@ function RegisterTab({coupons,onUse}){
       return;
     }
     try{
-      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment",width:{ideal:1280},height:{ideal:720}}});
+      const stream=await navigator.mediaDevices.getUserMedia({
+        video:{facingMode:"environment",width:{ideal:1280},height:{ideal:720}}
+      });
       streamRef.current=stream;
-      if(videoRef.current){videoRef.current.srcObject=stream;videoRef.current.play().catch(()=>{});}
+      // まず scanning=true でvideo要素をDOMに出現させる
       setScanning(true);
+      // video要素がレンダリングされるのを待ってから srcObject をセット
+      pendingStreamRef.current=stream;
     }catch(e){
       const msg=e?.name==="NotAllowedError"
-        ?"カメラの許可が必要です。\nアドレスバー左のアイコンをタップして\nカメラのアクセスを「許可」してください。"
+        ?"カメラの許可が必要です。\nSafariの設定 → このWebサイトの設定 →\nカメラを「許可」に変更してください。"
         :`カメラを起動できませんでした。\n(${e?.message||String(e)})`;
       setErr(msg);
     }
@@ -638,7 +656,7 @@ function RegisterTab({coupons,onUse}){
       <div className="cam-area">
         {scanning?(
           <>
-            <video ref={videoRef} className="cam-vid" playsInline muted autoPlay/>
+            <video ref={videoRef} className="cam-vid" playsInline muted/>
             <canvas ref={canvasRef} style={{display:"none"}}/>
             <div className="scan-ov">
               <div className="scan-frame"><div className="scan-line"/>
